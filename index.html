@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soil Moisture Decrypt Display</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background-color: #f0f0f0; }
+        h1 { color: #333; }
+        #display { font-size: 24px; margin: 20px; padding: 20px; border: 2px solid #333; background-color: white; }
+        #status { color: green; }
+    </style>
+    <!-- Library MQTT dan ASCON -->
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ascon-js@1.0.0/ascon.min.js"></script> <!-- Ganti jika library berbeda; pastikan mendukung Ascon-128 AEAD -->
+</head>
+<body>
+    <h1>Soil Moisture Sensor Display (Decrypted)</h1>
+    <div id="display">
+        <p>Moisture: <span id="moisture">--</span>%</p>
+        <p>Status: <span id="status">Connecting...</span></p>
+    </div>
+
+    <script>
+        // Konfigurasi MQTT (sesuai kode ESP32)
+        const MQTT_BROKER = 'ws://broker.hivemq.com:8000/mqtt'; // WebSocket untuk browser
+        const MQTT_TOPIC = 'soil-ascon128';
+        const client = mqtt.connect(MQTT_BROKER);
+
+        // Konfigurasi ASCON (HARUS sama dengan ESP32)
+        const KEY = new Uint8Array([97, 115, 99, 111, 110, 99, 105, 112, 104, 101, 114, 116, 101, 115, 116, 49]); // "asconciphertest1" sebagai bytes
+        const NONCE = new Uint8Array([97, 115, 99, 111, 110, 99, 105, 112, 104, 101, 114, 49, 116, 101, 115, 116]); // "asconcipher1test" sebagai bytes
+        const ASSOCIATED_DATA = new Uint8Array([65, 83, 67, 79, 78]); // "ASCON" sebagai bytes
+        const VARIANT = 'Ascon-128'; // Sesuai kode ESP32
+
+        // Fungsi untuk mendekripsi
+        function decryptData(encryptedHex) {
+            try {
+                // Konversi hex string ke bytes
+                const encryptedBytes = new Uint8Array(encryptedHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                
+                // Dekripsi menggunakan Ascon-128 AEAD (asumsikan library mendukung)
+                // Catatan: Pastikan library Anda mendukung dekripsi dengan ciphertext + tag (tanpa nonce terpisah)
+                const decrypted = ascon.aeadDecrypt(VARIANT, encryptedBytes, KEY, NONCE, ASSOCIATED_DATA);
+                
+                // Konversi bytes kembali ke integer (nilai kelembaban)
+                const moistureValue = decrypted[0]; // Asumsikan 1 byte
+                return moistureValue;
+            } catch (e) {
+                console.error('Dekripsi gagal:', e);
+                return null;
+            }
+        }
+
+        // Event handler MQTT
+        client.on('connect', () => {
+            console.log('Terhubung ke MQTT');
+            document.getElementById('status').textContent = 'Connected to MQTT';
+            client.subscribe(MQTT_TOPIC);
+        });
+
+        client.on('message', (topic, message) => {
+            try {
+                const data = JSON.parse(message.toString());
+                if (data.data && data.sensor === 'soil_moisture') {
+                    const decryptedValue = decryptData(data.data);
+                    if (decryptedValue !== null) {
+                        document.getElementById('moisture').textContent = decryptedValue;
+                        document.getElementById('status').textContent = 'Data Updated';
+                    } else {
+                        document.getElementById('status').textContent = 'Dekripsi Gagal';
+                    }
+                }
+            } catch (e) {
+                console.error('Error parsing message:', e);
+                document.getElementById('status').textContent = 'Error Parsing Data';
+            }
+        });
+
+        client.on('error', (err) => {
+            console.error('MQTT Error:', err);
+            document.getElementById('status').textContent = 'MQTT Error';
+        });
+    </script>
+</body>
+</html>
